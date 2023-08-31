@@ -76,19 +76,27 @@ export async function importPermissions(
   });
 
   // Delete permissions not existing more on roles that we manage
-  await permissionsService.deleteByQuery({
-    filter: {
-      collection,
-      role: {
-        _in: [...updatingRoles].map((role) =>
-          role === null ? permissionsService.knex.raw("NULL") : role
-        ) as Array<string>,
+  if (updatingActions.size === 0 && updatingRoles.size === 0) {
+    await permissionsService.deleteByQuery({
+      filter: {
+        collection,
       },
-      action: {
-        _nin: [...updatingActions] as Array<string>,
+    }, { emitEvents: false });
+  } else {
+    await permissionsService.deleteByQuery({
+      filter: {
+        collection,
+        role: {
+          _in: [...updatingRoles].map((role) =>
+            role === null ? permissionsService.knex.raw("NULL") : role
+          ) as Array<string>,
+        },
+        action: {
+          _nin: [...updatingActions] as Array<string>,
+        },
       },
-    },
-  }, { emitEvents: false });
+    }, { emitEvents: false });
+  }
 
   const queue = permissionsToImport.map(async (permission) => {
     const { collection, action, role } = permission;
@@ -171,17 +179,8 @@ export async function exportPermissions(
   });
 
   const yamlFile = path.join(permissionsPath, `${collection}.yaml`);
-  if (!yamlOutput.startsWith("[]")) {
-    yamlOutput = yamlOutput.replace(/- action/g, "\n- action");
-    await fse.writeFile(yamlFile, yamlOutput, "utf8").catch(console.error);
-  } else {
-    const filepathDir = path.dirname(yamlFile);
-    await fse.readdir(filepathDir).then((files) => {
-      if (files.find((file) => file === `${collection}.yaml`)) {
-        return fse.remove(yamlFile);
-      }
-    }).catch(console.error);
-  }
+  yamlOutput = yamlOutput.replace(/- action/g, "\n- action");
+  await fse.writeFile(yamlFile, yamlOutput, "utf8").catch(console.error);
 }
 
 //
