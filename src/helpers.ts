@@ -4,6 +4,7 @@ import { dump as toYaml, load as fromYaml } from "js-yaml";
 import { isEmpty, isEqual } from "lodash-es";
 import path from "path";
 import { ItemsService, StoredPermission, StoredRole } from "./types";
+import { log } from "console";
 
 const configPath = process.env.RBAC_CONFIG_PATH || "./config";
 const permissionsPath = path.resolve(configPath, "permissions");
@@ -34,6 +35,17 @@ export async function listConfiguredCollections() {
   });
 
   return collections;
+}
+
+function readConfiguredCollection(
+  collection: string,
+  permissionsService: ItemsService,
+) {
+  return permissionsService.readByQuery({
+    filter: {
+      collection,
+    },
+  }) as Promise<Permission[]>;
 }
 
 export async function importPermissions(
@@ -76,27 +88,34 @@ export async function importPermissions(
   });
 
   // Delete permissions not existing more on roles that we manage
-  if (updatingActions.size === 0 && updatingRoles.size === 0) {
-    await permissionsService.deleteByQuery({
-      filter: {
-        collection,
-      },
-    }, { emitEvents: false });
-  } else {
-    await permissionsService.deleteByQuery({
-      filter: {
-        collection,
-        role: {
-          _in: [...updatingRoles].map((role) =>
-            role === null ? permissionsService.knex.raw("NULL") : role
-          ) as Array<string>,
+  const rows = await readConfiguredCollection(collection, permissionsService);
+  rows.forEach(async (row) => {
+    if (!updatingRoles.has(row.role)) {
+      console.log("delete: ", collection + " " + row.role);
+      await permissionsService.deleteByQuery({
+        filter: {
+          collection,
+          role: {
+            _in: [row.role],
+          },
         },
-        action: {
-          _nin: [...updatingActions] as Array<string>,
-        },
+      }, { emitEvents: false });
+    }
+  });
+
+  await permissionsService.deleteByQuery({
+    filter: {
+      collection,
+      role: {
+        _in: [...updatingRoles].map((role) =>
+          role === null ? permissionsService.knex.raw("NULL") : role
+        ) as Array<string>,
       },
-    }, { emitEvents: false });
-  }
+      action: {
+        _nin: [...updatingActions] as Array<string>,
+      },
+    },
+  }, { emitEvents: false });
 
   const queue = permissionsToImport.map(async (permission) => {
     const { collection, action, role } = permission;
@@ -126,11 +145,8 @@ export async function exportPermissions(
   collection: string,
   permissionsService: ItemsService,
 ) {
-  const rows = await permissionsService.readByQuery({
-    filter: {
-      collection,
-    },
-  }) as Permission[];
+  const rows = await readConfiguredCollection(collection, permissionsService);
+  console.log("rows: ", rows);
 
   // Find matching permissions to group roles into
   const uniquePerms: Array<[StoredPermission, Array<string | null>]> = [];
@@ -150,6 +166,8 @@ export async function exportPermissions(
     if (!isEmpty(presets)) {
       perm.presets = presets;
     }
+
+    // console.log("-------------");
 
     if (Array.isArray(fields) && fields.length) {
       fields.sort((a, b) => a.localeCompare(b));
