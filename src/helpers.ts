@@ -36,6 +36,17 @@ export async function listConfiguredCollections() {
   return collections;
 }
 
+function readConfiguredCollection(
+  collection: string,
+  permissionsService: ItemsService,
+) {
+  return permissionsService.readByQuery({
+    filter: {
+      collection,
+    },
+  }) as Promise<Permission[]>;
+}
+
 export async function importPermissions(
   collection: string,
   permissionsService: ItemsService,
@@ -76,6 +87,20 @@ export async function importPermissions(
   });
 
   // Delete permissions not existing more on roles that we manage
+  const rows = await readConfiguredCollection(collection, permissionsService);
+  rows.forEach(async (row) => {
+    if (!updatingRoles.has(row.role)) {
+      await permissionsService.deleteByQuery({
+        filter: {
+          collection,
+          role: {
+            _in: [row.role],
+          },
+        },
+      }, { emitEvents: false });
+    }
+  });
+
   if (updatingActions.size === 0 && updatingRoles.size === 0) {
     await permissionsService.deleteByQuery({
       filter: {
@@ -126,11 +151,7 @@ export async function exportPermissions(
   collection: string,
   permissionsService: ItemsService,
 ) {
-  const rows = await permissionsService.readByQuery({
-    filter: {
-      collection,
-    },
-  }) as Permission[];
+  const rows = await readConfiguredCollection(collection, permissionsService);
 
   // Find matching permissions to group roles into
   const uniquePerms: Array<[StoredPermission, Array<string | null>]> = [];
